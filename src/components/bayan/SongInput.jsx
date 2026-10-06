@@ -25,7 +25,7 @@ export default function SongInput({ onSongReady, isLoading, setIsLoading }) {
   const submit = async event => {
     event.preventDefault();
     if (isLoading) return;
-    setError(''); setProgress('Загружаем аудио с YouTube…'); setIsLoading(true);
+    setError(''); setProgress('Открываем видео через Gemini…'); setIsLoading(true);
     const controller = new AbortController(); request.current = controller;
     try {
       const created = await fetch('/api/transcriptions', {
@@ -56,8 +56,8 @@ export default function SongInput({ onSongReady, isLoading, setIsLoading }) {
       {isLoading ? 'Распознаём…' : 'Получить мелодию и аккорды'}
     </Button>
     {progress && <p role="status" className="text-sm text-slate-600">{progress}</p>}
-    {configured === false && <p className="text-sm text-amber-700">Распознавание пока не настроено на сервере. Нужны Gemini API и FFmpeg.</p>}
+    {configured === false && <p className="text-sm text-amber-700">Распознавание пока не настроено на сервере. Нужен ключ Gemini API.</p>}
     {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-    <p className="text-xs text-slate-400">Аудио отправляется в Gemini для распознавания. Это упрощённая учебная версия; сложные записи могут распознаваться с ошибками.</p>
+    <p className="text-xs text-slate-400">Gemini распознаёт музыку по ссылке на видео. Это упрощённая учебная версия; сложные записи могут распознаваться с ошибками.</p>
   </form>;
 }

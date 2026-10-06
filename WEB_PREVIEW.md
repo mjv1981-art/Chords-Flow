@@ -1,6 +1,6 @@
 # BayanFlow browser preview on GitHub
 
-GitHub Pages serves static files and cannot run the Python/FFmpeg YouTube transcription backend. Use a **GitHub Codespace** for a temporary, browser-accessible preview. No installation on your computer is needed. Codespaces uses your GitHub account's included compute/storage allowance; it is not permanent, unlimited free hosting. Check remaining usage under GitHub Settings → Billing and licensing before starting, and stop/delete the Codespace when finished.
+GitHub Pages serves static files and cannot run the Python/Gemini transcription backend. Use a **GitHub Codespace** for a temporary, browser-accessible preview. No installation on your computer is needed. Codespaces uses your GitHub account's included compute/storage allowance; it is not permanent, unlimited free hosting. Check remaining usage under GitHub Settings → Billing and licensing before starting, and stop/delete the Codespace when finished.
 
 1. In GitHub, open **Settings → Codespaces → Secrets → New secret**. Name it `GEMINI_API_KEY`, enter your Gemini key securely, and grant access to `mjv1981-art/Chords-Flow`. The secret configured in Codex is not automatically transferred to GitHub. Do not put the key in a repository file or a Pages build variable.
 2. Open the repository's **bayanflow-web-preview** branch. Choose **Code → Codespaces → Create codespace on bayanflow-web-preview**. Use the 2-core machine. You can also open the branch-specific Codespaces creation link supplied in chat.
@@ -14,14 +14,14 @@ If the page says transcription is not configured, check that the Codespaces secr
 If startup failed or reports `.venv/bin/python: No such file or directory`, open **Terminal** in the browser editor and run:
 
 ```bash
-git pull --ff-only && bash scripts/start-codespace.sh
+git pull --ff-only && bash scripts/start-codespace.sh --restart
 ```
 
-The startup script installs missing prerequisites in Codespaces, creates the Python environment, installs dependencies, and builds the player before starting the server. Wait until it reports that BayanFlow is running, then open port **8000** from **Ports**. Later starts reuse dependencies and the build when they have not changed. If startup still fails, the terminal shows the error; server output is also saved in `.cache/codespace-server.log`.
+The startup script installs missing prerequisites in Codespaces, creates the Python environment, installs dependencies, and builds the player before starting the server. Wait until it reports that BayanFlow is running, then open port **8000** from **Ports**. Later starts reuse dependencies and the build when they have not changed. The `--restart` option restarts the preview process recorded by the script, so backend updates take effect. If startup still fails, the terminal shows the error; server output is also saved in `.cache/codespace-server.log`.
 
 If the image reports `NO_PUBKEY` for the Yarn repository, pull the latest startup script with the command above. Prerequisite installation uses Debian's official archives and archive signing key, without changing the image's other repository settings.
 
-**Known limitation:** Gemini accepts actual audio, but the tested generated melody was transcribed with incorrect pitches/key. This is a prototype; musical accuracy is not ready for reliable practice. YouTube can also reject datacenter downloads or require login. A forwarded URL does not establish that a particular video can be downloaded or accurately transcribed.
+**Known limitation:** Gemini accepts actual audio, but the tested generated melody was transcribed with incorrect pitches/key. This is a prototype; musical accuracy is not ready for reliable practice. Gemini now receives the YouTube URL directly, avoiding downloads from the hosting server. A live request accepted the screenshot video URL; this does not establish accurate melody/chords or access to every video. Private or restricted videos may remain unavailable.
 
 ## Permanent hosting alternative
 
@@ -29,4 +29,4 @@ If the image reports `NO_PUBKEY` for the Yarn repository, pull the latest startu
 
 The dev-container, scripts, Docker container and blueprint prepare deployment; an actual GitHub Codespace or Render service still needs to be created in your hosting account. Do not describe a published branch as a live site.
 
-Validation in Codex: 25 server checks passed, and the Docker image successfully served the built frontend, JS/CSS assets and API, detected FFmpeg/Node, and respected the hosting PORT. The container runs as a non-root user. The local build used the existing trusted CA bundle through a temporary build secret mount; TLS verification remained enabled and the bundle is not baked into the image. Actual creation of a GitHub Codespace, its forwarded public address and YouTube download from that host remain unverified until your account creates the Codespace.
+Validation in Codex: 25 server checks passed, and the Docker image successfully served the built frontend, JS/CSS assets and API, detected FFmpeg/Node, and respected the hosting PORT. The container runs as a non-root user. The local build used the existing trusted CA bundle through a temporary build secret mount; TLS verification remained enabled and the bundle is not baked into the image. The user has opened the player through their Codespace; the new native-YouTube flow still needs validation in that Codespace after pulling and restarting.

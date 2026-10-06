@@ -6,7 +6,7 @@ from unittest.mock import Mock
 from fastapi.testclient import TestClient
 import pytest
 
-from server.transcription import AudioScore, TranscriptionError, assemble_song, recognize_chunk, youtube_url
+from server.transcription import AudioScore, TranscriptionError, VideoMetadata, assemble_song, recognize_chunk, video_metadata, youtube_url
 
 backend = importlib.import_module('server.app')
 client = TestClient(backend.app)
@@ -71,6 +71,7 @@ def test_missing_credentials_and_unknown_job():
 
 def test_job_completes_with_controlled_audio_service(monkeypatch):
     monkeypatch.setenv('GEMINI_API_KEY', 'test-placeholder')
+    monkeypatch.setattr(backend.shutil, 'which', lambda tool: None)
     result = assemble_song([(0,2,score())], {'title':'Fixture'}, 'https://youtu.be/abcdefghijk')
     monkeypatch.setattr(backend, 'transcribe', lambda url, progress: result)
     response = client.post('/api/transcriptions', json={'url':'https://youtu.be/abcdefghijk'})
@@ -116,28 +117,51 @@ def test_gemini_receives_real_audio_and_validates_response(monkeypatch, tmp_path
         recognize_chunk(clip,2)
 
 
-def test_real_ffmpeg_audio_segmentation_and_complete_pipeline(monkeypatch, tmp_path):
-    import subprocess
+def test_native_youtube_pipeline_segments_video_and_carries_musical_context(monkeypatch):
     import server.transcription as pipeline
-    audio = tmp_path / 'actual-audio.wav'
-    subprocess.run(['ffmpeg','-nostdin','-v','error','-f','lavfi','-i',
-                    'sine=frequency=293.665:duration=2',str(audio)], check=True)
-    monkeypatch.setenv('GEMINI_API_KEY','test-placeholder')
-    monkeypatch.setattr(pipeline,'download_audio',lambda url,folder: (audio,{'title':'Tone fixture','duration':2}))
+    monkeypatch.setattr(pipeline, 'video_metadata', lambda url: VideoMetadata(
+        accessible=True, reason='', title='Video fixture', uploader='', duration=62, is_live=False))
     seen = []
-    def provider(clip, duration, context):
-        assert clip.exists() and clip.stat().st_size > 1000
-        assert clip.read_bytes().startswith(b'ID3')
-        assert duration == 2
-        seen.append(clip)
-        return score()
+    def provider(url, duration, context, *, offset):
+        assert url == 'https://www.youtube.com/watch?v=abcdefghijk'
+        seen.append((offset, duration, context))
+        return score(harmony=[dict(chord='Dm', start=0, duration=duration)])
     monkeypatch.setattr(pipeline,'recognize_chunk',provider)
     updates = []
     result = pipeline.transcribe('https://youtu.be/abcdefghijk',updates.append)
     assert result['right_hand'][0]['note'] == 'D4'
     assert result['harmony'][0]['chord'] == 'Dm'
-    assert len(updates) >= 3
-    assert not seen[0].exists()  # Temporary audio is removed on completion.
+    assert result['title'] == 'Video fixture'
+    assert [item[:2] for item in seen] == [(0,30),(30,30),(60,2)]
+    assert seen[0][2] is None
+    assert seen[1][2] == seen[2][2] == dict(key='Dm', tempo=120, time_signature='4/4')
+    assert len(updates) == 5
+
+
+def test_gemini_native_youtube_input_has_clip_offsets_and_relative_timing(monkeypatch):
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-placeholder')
+    response = Mock(status_code=200)
+    response.json.return_value = {'candidates':[{'finishReason':'STOP','content':{'parts':[{'text':score().model_dump_json()}]}}]}
+    post = Mock(return_value=response)
+    monkeypatch.setattr('server.transcription.httpx.post', post)
+    assert recognize_chunk('https://youtu.be/abcdefghijk?list=ignored', 2, offset=30).key == 'Dm'
+    parts = post.call_args.kwargs['json']['contents'][0]['parts']
+    assert parts[1] == {'fileData': {'fileUri': 'https://www.youtube.com/watch?v=abcdefghijk'},
+                        'videoMetadata': {'startOffset': '30.000s', 'endOffset': '32.000s'}}
+    assert 'relative to THIS segment' in parts[0]['text']
+
+
+@pytest.mark.parametrize('changes', [{'accessible': False}, {'duration': 0}, {'duration': 601},
+                                   {'duration': float('nan')}, {'is_live': True}])
+def test_native_video_metadata_rejects_unavailable_live_or_invalid_duration(monkeypatch, changes):
+    import json
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-placeholder')
+    data = dict(accessible=True, reason='', title='Fixture', uploader='', duration=62, is_live=False) | changes
+    response = Mock(status_code=200)
+    response.json.return_value = {'candidates':[{'finishReason':'STOP','content':{'parts':[{'text':json.dumps(data)}]}}]}
+    monkeypatch.setattr('server.transcription.httpx.post', Mock(return_value=response))
+    with pytest.raises(TranscriptionError):
+        video_metadata('https://youtu.be/abcdefghijk')
 
 
 def test_silent_intro_does_not_set_the_song_key_or_tempo():

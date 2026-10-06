@@ -3,6 +3,32 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p .cache
 bash scripts/prepare-codespace.sh
+if [ "${1:-}" = '--restart' ]; then
+  .venv/bin/python - <<'PY'
+import os, signal, time
+from pathlib import Path
+record = Path('.cache/codespace-server.pid')
+if record.exists():
+    pid = int(record.read_text().strip())
+    command = Path(f'/proc/{pid}/cmdline')
+    def is_preview():
+        try:
+            args = command.read_bytes().split(b'\0')
+            return b'uvicorn' in args and b'server.app:app' in args and b'8000' in args
+        except FileNotFoundError:
+            return False
+    if is_preview():
+        print('Restarting the BayanFlow preview…')
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(100):
+            if not is_preview():
+                break
+            time.sleep(.1)
+        else:
+            raise SystemExit('The previous preview is still stopping. Retry startup in a moment.')
+    record.unlink(missing_ok=True)
+PY
+fi
 if .venv/bin/python - <<'PY'
 import urllib.request, json
 try:
@@ -26,10 +52,12 @@ for _ in range(40):
         with urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2) as response:
             data = json.load(response)
             assert data['status'] == 'ok'
-            print('BayanFlow is running. Open port 8000 from the Codespaces Ports tab.')
-            if not data['transcription_configured']:
-                print('Add GEMINI_API_KEY as a GitHub Codespaces secret for this repository, then restart the Codespace.')
-            break
+        with urllib.request.urlopen('http://127.0.0.1:8000/', timeout=2) as response:
+            assert 'BayanFlow' in response.read().decode()
+        print('BayanFlow is running. Open port 8000 from the Codespaces Ports tab.')
+        if not data['transcription_configured']:
+            print('Add GEMINI_API_KEY as a GitHub Codespaces secret for this repository, then restart the Codespace.')
+        break
     except Exception:
         time.sleep(.25)
 else:

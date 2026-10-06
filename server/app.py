@@ -59,6 +59,7 @@ class Request(BaseModel):
 @app.get('/api/health')
 def health():
     return {'status': 'ok', 'transcription_configured': bool(os.environ.get('GEMINI_API_KEY')),
+            'transcription_source': 'gemini_youtube',
             'ffmpeg_available': bool(shutil.which('ffmpeg') and shutil.which('ffprobe'))}
 
 
@@ -87,8 +88,6 @@ def create(request: Request):
         raise HTTPException(422, str(error)) from None
     if not os.environ.get('GEMINI_API_KEY'):
         raise HTTPException(503, 'Распознавание не настроено. Добавьте GEMINI_API_KEY в настройках сервера.')
-    if not health()['ffmpeg_available']:
-        raise HTTPException(503, 'На сервере отсутствует FFmpeg/ffprobe.')
     with lock:
         now = time.time()
         for job_id in list(jobs):
@@ -101,7 +100,7 @@ def create(request: Request):
             if oldest:
                 del jobs[oldest]
         job_id = uuid.uuid4().hex
-        jobs[job_id] = {'id': job_id, 'status': 'processing', 'created': now, 'progress': 'Загружаем аудио…'}
+        jobs[job_id] = {'id': job_id, 'status': 'processing', 'created': now, 'progress': 'Открываем видео через Gemini…'}
         executor.submit(process, job_id, url)
     return {'id': job_id}
 
