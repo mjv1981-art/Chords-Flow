@@ -20,9 +20,9 @@ COPY server/requirements.txt ./server/requirements.txt
 RUN --mount=type=secret,id=build_ca,required=false \
     if [ -s /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \
     pip install --no-cache-dir -r server/requirements.txt
-COPY server ./server
-COPY --from=frontend /build/dist ./dist
-COPY scripts/start-web.sh ./scripts/start-web.sh
+COPY --chown=10001:10001 server ./server
+COPY --from=frontend --chown=10001:10001 /build/dist ./dist
+COPY --chown=10001:10001 scripts/start-web.sh ./scripts/start-web.sh
 USER bayanflow
 EXPOSE 8000
 CMD ["bash", "scripts/start-web.sh"]
