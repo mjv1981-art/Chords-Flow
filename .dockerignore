@@ -1,0 +1,17 @@
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!index.html
+!vite.config.js
+!jsconfig.json
+!postcss.config.js
+!tailwind.config.js
+!src/
+!src/**
+!server/
+!server/**
+!scripts/
+!scripts/start-web.sh
+**/__pycache__/
+**/.env*

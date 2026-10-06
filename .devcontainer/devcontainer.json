@@ -1,0 +1,17 @@
+{
+  "name": "BayanFlow web preview",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "24" }
+  },
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "BayanFlow",
+      "onAutoForward": "openBrowser",
+      "protocol": "http"
+    }
+  },
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y ffmpeg && bash scripts/setup.sh && npm run build",
+  "postStartCommand": "bash scripts/start-codespace.sh"
+}
