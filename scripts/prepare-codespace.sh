@@ -20,8 +20,7 @@ if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null || ! python
     exit 1
   fi
   echo 'Installing the browser preview prerequisites…'
-  sudo -n apt-get update
-  sudo -n apt-get install -y ffmpeg python3-venv
+  bash scripts/install-codespace-prerequisites.sh
 fi
 
 setup_hash=$(sha256sum server/requirements.txt package-lock.json scripts/setup.sh | sha256sum | cut -d ' ' -f 1)

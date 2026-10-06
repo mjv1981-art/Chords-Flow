@@ -19,6 +19,8 @@ git pull --ff-only && bash scripts/start-codespace.sh
 
 The startup script installs missing prerequisites in Codespaces, creates the Python environment, installs dependencies, and builds the player before starting the server. Wait until it reports that BayanFlow is running, then open port **8000** from **Ports**. Later starts reuse dependencies and the build when they have not changed. If startup still fails, the terminal shows the error; server output is also saved in `.cache/codespace-server.log`.
 
+If the image reports `NO_PUBKEY` for the Yarn repository, pull the latest startup script with the command above. Prerequisite installation uses Debian's official archives and archive signing key, without changing the image's other repository settings.
+
 **Known limitation:** Gemini accepts actual audio, but the tested generated melody was transcribed with incorrect pitches/key. This is a prototype; musical accuracy is not ready for reliable practice. YouTube can also reject datacenter downloads or require login. A forwarded URL does not establish that a particular video can be downloaded or accurately transcribed.
 
 ## Permanent hosting alternative
