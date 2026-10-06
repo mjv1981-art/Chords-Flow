@@ -101,3 +101,29 @@ test('a full-length score stays within canvas limits at high pixel density', asy
     assert.ok(await page.locator('canvas').evaluate(c=>c.width) < 8192);
   } finally { await browser.close(); }
 });
+
+for (const status of ['processing', 'partial']) {
+  test(`a ready fragment remains playable when transcription is ${status}`, async () => {
+    const browser = await launch();
+    try {
+      const page = await browser.newPage({viewport:{width:1440,height:900}});
+      const notice = 'Готовая часть 0:30 из 2:00. Остальная часть ещё обрабатывается.';
+      const partial = {...fixture, transcription_partial:true, processed_seconds:30,
+        total_seconds:120, lyrics_notice:notice, transcription_warning:notice};
+      await page.route('**/api/health',r=>r.fulfill({json:{status:'ok',transcription_configured:true,ffmpeg_available:false}}));
+      await page.route('**/api/transcriptions',r=>r.fulfill({status:202,json:{id:'partial-check'}}));
+      await page.route('**/api/transcriptions/partial-check',r=>r.fulfill({json:{status,song:partial,progress:'Ready',error:notice}}));
+      await page.goto(origin);
+      await page.getByLabel('Ссылка на YouTube').fill(video);
+      await page.getByRole('button',{name:'Получить мелодию и аккорды'}).click();
+      await page.getByRole('button',{name:'Открыть готовую часть (0:30)'}).waitFor();
+      assert.equal(await page.getByText('Распознавание пока не настроено на сервере.',{exact:false}).count(),0);
+      if (status === 'partial') assert.match(await page.getByRole('alert').innerText(),/Готовая часть/);
+      await page.getByRole('button',{name:'Открыть готовую часть (0:30)'}).click();
+      await page.getByRole('heading',{name:fixture.title}).waitFor();
+      assert.equal(await page.getByText(notice,{exact:true}).count(),1);
+      await page.getByRole('button',{name:'Воспроизвести',exact:true}).click();
+      await page.waitForFunction(() => document.querySelector('button[title="D4"]')?.className.includes('scale-110'));
+    } finally { await browser.close(); }
+  });
+}

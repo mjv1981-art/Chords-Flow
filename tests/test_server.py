@@ -6,14 +6,15 @@ from unittest.mock import Mock
 from fastapi.testclient import TestClient
 import pytest
 
-from server.transcription import AudioScore, TranscriptionError, VideoMetadata, assemble_song, recognize_chunk, video_metadata, youtube_url
+from server.transcription import AudioScore, InvalidScore, TranscriptionError, VideoMetadata, assemble_song, recognize_chunk, video_metadata, youtube_url
 
 backend = importlib.import_module('server.app')
 client = TestClient(backend.app)
 
 
 @pytest.fixture(autouse=True)
-def clean_jobs(monkeypatch):
+def clean_jobs(monkeypatch, tmp_path):
+    monkeypatch.setenv('BAYANFLOW_CACHE_DIR', str(tmp_path / 'cache'))
     monkeypatch.delenv('GEMINI_API_KEY', raising=False)
     monkeypatch.delenv('BAYANFLOW_ACCESS_PASSWORD', raising=False)
     monkeypatch.delenv('BAYANFLOW_PUBLIC', raising=False)
@@ -119,10 +120,10 @@ def test_gemini_receives_real_audio_and_validates_response(monkeypatch, tmp_path
 
 def test_native_youtube_pipeline_segments_video_and_carries_musical_context(monkeypatch):
     import server.transcription as pipeline
-    monkeypatch.setattr(pipeline, 'video_metadata', lambda url: VideoMetadata(
+    monkeypatch.setattr(pipeline, 'video_metadata', lambda url, **kwargs: VideoMetadata(
         accessible=True, reason='', title='Video fixture', uploader='', duration=62, is_live=False))
     seen = []
-    def provider(url, duration, context, *, offset):
+    def provider(url, duration, context, *, offset, **kwargs):
         assert url == 'https://www.youtube.com/watch?v=abcdefghijk'
         seen.append((offset, duration, context))
         return score(harmony=[dict(chord='Dm', start=0, duration=duration)])
@@ -135,7 +136,8 @@ def test_native_youtube_pipeline_segments_video_and_carries_musical_context(monk
     assert [item[:2] for item in seen] == [(0,30),(30,30),(60,2)]
     assert seen[0][2] is None
     assert seen[1][2] == seen[2][2] == dict(key='Dm', tempo=120, time_signature='4/4')
-    assert len(updates) == 5
+    assert len([update for update in updates if isinstance(update, dict)]) == 3
+    assert result['transcription_partial'] is False
 
 
 def test_gemini_native_youtube_input_has_clip_offsets_and_relative_timing(monkeypatch):
@@ -147,8 +149,12 @@ def test_gemini_native_youtube_input_has_clip_offsets_and_relative_timing(monkey
     assert recognize_chunk('https://youtu.be/abcdefghijk?list=ignored', 2, offset=30).key == 'Dm'
     parts = post.call_args.kwargs['json']['contents'][0]['parts']
     assert parts[1] == {'fileData': {'fileUri': 'https://www.youtube.com/watch?v=abcdefghijk'},
-                        'videoMetadata': {'startOffset': '30.000s', 'endOffset': '32.000s'}}
+                        'videoMetadata': {'startOffset': '30.000s', 'endOffset': '32.000s', 'fps': 0.1}}
     assert 'relative to THIS segment' in parts[0]['text']
+    config = post.call_args.kwargs['json']['generationConfig']
+    assert config['thinkingConfig'] == {'thinkingLevel': 'low'}
+    assert config['maxOutputTokens'] == 8192
+    assert config['responseSchema']['properties']['tempo']['maximum'] == 240
 
 
 @pytest.mark.parametrize('changes', [{'accessible': False}, {'duration': 0}, {'duration': 601},
@@ -162,6 +168,115 @@ def test_native_video_metadata_rejects_unavailable_live_or_invalid_duration(monk
     monkeypatch.setattr('server.transcription.httpx.post', Mock(return_value=response))
     with pytest.raises(TranscriptionError):
         video_metadata('https://youtu.be/abcdefghijk')
+
+
+def test_equivalent_notation_is_simplified_without_rounding_wrong_pitches():
+    from pydantic import ValidationError
+    result = score(key='D minor', notes=[dict(midi=62.0, start=0, duration=1)],
+                   harmony=[dict(chord='Dm7/A', start=0, duration=2)])
+    assert result.key == 'Dm'
+    assert result.notes[0].midi == 62
+    assert result.harmony[0].chord == 'Dm'
+    with pytest.raises(ValidationError):
+        score(notes=[dict(midi=62.5, start=0, duration=1)])
+
+
+def test_failed_fragment_is_retried_and_valid_work_resumes_from_disk(monkeypatch):
+    import server.transcription as pipeline
+    metadata = Mock(return_value=VideoMetadata(accessible=True, reason='', title='Resume fixture',
+                                              uploader='', duration=62, is_live=False))
+    monkeypatch.setattr(pipeline, 'video_metadata', metadata)
+    seen = []
+    def failing(url, duration, context, *, offset, correction, **kwargs):
+        seen.append((offset, bool(correction)))
+        if offset == 30:
+            raise InvalidScore('invalid fixture')
+        return score(harmony=[dict(chord='Dm', start=0, duration=duration)])
+    monkeypatch.setattr(pipeline, 'recognize_chunk', failing)
+    updates = []
+    partial = pipeline.transcribe('https://youtu.be/abcdefghijk', updates.append)
+    assert seen == [(0,False), (30,False), (30,True)]
+    assert partial['transcription_partial'] is True
+    assert partial['processed_seconds'] == 30
+    assert partial['total_seconds'] == 62
+    assert '0:30' in partial['lyrics_notice']
+    assert any(isinstance(update,dict) and update['song']['right_hand'] for update in updates)
+    seen.clear()
+    def succeeding(url, duration, context, *, offset, **kwargs):
+        seen.append(offset)
+        return score(harmony=[dict(chord='Dm', start=0, duration=duration)])
+    monkeypatch.setattr(pipeline, 'recognize_chunk', succeeding)
+    complete = pipeline.transcribe('https://youtu.be/abcdefghijk', updates.append)
+    assert complete['transcription_partial'] is False
+    assert seen == [30, 60]
+    assert metadata.call_count == 1
+    seen.clear()
+    assert pipeline.transcribe('https://youtu.be/abcdefghijk', updates.append) == complete
+    assert not seen
+
+
+def test_bad_timing_is_checked_before_cache_and_retried_once(monkeypatch):
+    import server.transcription as pipeline
+    monkeypatch.setattr(pipeline, 'video_metadata', lambda url, **kwargs: VideoMetadata(
+        accessible=True, reason='', title='Retry fixture', uploader='', duration=2, is_live=False))
+    provider = Mock(side_effect=[
+        score(harmony=[dict(chord='Dm', start=1, duration=1)]), score()
+    ])
+    monkeypatch.setattr(pipeline, 'recognize_chunk', provider)
+    result = pipeline.transcribe('https://youtu.be/abcdefghijk', lambda update: None)
+    assert result['transcription_partial'] is False
+    assert provider.call_count == 2
+    assert 'разрывов' in provider.call_args.kwargs['correction']
+    pipeline.transcribe('https://youtu.be/abcdefghijk', lambda update: None)
+    assert provider.call_count == 2
+
+
+def test_time_limit_keeps_a_playable_part_and_stops_new_requests(monkeypatch):
+    import server.transcription as pipeline
+    monkeypatch.setattr(pipeline, 'video_metadata', lambda url, **kwargs: VideoMetadata(
+        accessible=True, reason='', title='Budget fixture', uploader='', duration=62, is_live=False))
+    monkeypatch.setattr(pipeline, 'JOB_SECONDS', .03)
+    def slow(url, duration, context, **kwargs):
+        time.sleep(.05)
+        return score(harmony=[dict(chord='Dm', start=0, duration=duration)])
+    provider = Mock(side_effect=slow)
+    monkeypatch.setattr(pipeline, 'recognize_chunk', provider)
+    result = pipeline.transcribe('https://youtu.be/abcdefghijk', lambda update: None)
+    assert result['transcription_partial'] is True
+    assert result['processed_seconds'] == 30
+    assert provider.call_count == 1
+
+
+def test_job_exposes_ready_song_while_processing_and_labels_partial_completion(monkeypatch):
+    import threading
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-placeholder')
+    ready = assemble_song([(0,2,score())], {'title':'Partial fixture'}, 'https://youtu.be/abcdefghijk')
+    ready.update(transcription_partial=True, transcription_warning='Готовая часть 0:02 из 1:00.')
+    release = threading.Event()
+    def provider(url, progress):
+        progress({'progress': 'Ready part', 'song': ready})
+        release.wait(3)
+        return ready
+    monkeypatch.setattr(backend, 'transcribe', provider)
+    response = client.post('/api/transcriptions', json={'url':'https://youtu.be/abcdefghijk'})
+    path = '/api/transcriptions/' + response.json()['id']
+    try:
+        for _ in range(50):
+            job = client.get(path).json()
+            if job.get('song'):
+                break
+            time.sleep(.01)
+        assert job['status'] == 'processing'
+        assert job['song'] == ready
+    finally:
+        release.set()
+    for _ in range(50):
+        job = client.get(path).json()
+        if job['status'] != 'processing':
+            break
+        time.sleep(.01)
+    assert job['status'] == 'partial'
+    assert job['error'] == ready['transcription_warning']
 
 
 def test_silent_intro_does_not_set_the_song_key_or_tempo():

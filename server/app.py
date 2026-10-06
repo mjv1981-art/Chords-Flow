@@ -66,11 +66,17 @@ def health():
 def process(job_id: str, url: str):
     def progress(message):
         with lock:
-            jobs[job_id]['progress'] = message
+            if isinstance(message, dict):
+                jobs[job_id].update(message)
+            else:
+                jobs[job_id]['progress'] = message
     try:
         song = transcribe(url, progress)
         with lock:
-            jobs[job_id].update(status='complete', song=song)
+            if song.get('transcription_partial'):
+                jobs[job_id].update(status='partial', song=song, error=song['transcription_warning'])
+            else:
+                jobs[job_id].update(status='complete', song=song)
     except TranscriptionError as error:
         with lock:
             jobs[job_id].update(status='failed', error=str(error))

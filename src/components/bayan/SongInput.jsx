@@ -14,18 +14,19 @@ export default function SongInput({ onSongReady, isLoading, setIsLoading }) {
   const [error, setError] = useState('');
   const [progress, setProgress] = useState('');
   const [configured, setConfigured] = useState(null);
+  const [readySong, setReadySong] = useState(null);
   const request = useRef(null);
   useEffect(() => {
     const controller = new AbortController();
     fetch('/api/health', { signal: controller.signal }).then(readResponse)
-      .then(data => setConfigured(data.transcription_configured && data.ffmpeg_available))
+      .then(data => setConfigured(data.transcription_configured))
       .catch(() => {});
     return () => { controller.abort(); request.current?.abort(); };
   }, []);
   const submit = async event => {
     event.preventDefault();
     if (isLoading) return;
-    setError(''); setProgress('Открываем видео через Gemini…'); setIsLoading(true);
+    setError(''); setReadySong(null); setProgress('Открываем видео через Gemini…'); setIsLoading(true);
     const controller = new AbortController(); request.current = controller;
     try {
       const created = await fetch('/api/transcriptions', {
@@ -35,7 +36,8 @@ export default function SongInput({ onSongReady, isLoading, setIsLoading }) {
       for (;;) {
         await new Promise(resolve => setTimeout(resolve, 1500));
         const job = await fetch(`/api/transcriptions/${created.id}`, { signal: controller.signal }).then(readResponse);
-        if (job.status === 'failed') throw new Error(job.error);
+        if (job.song) setReadySong(job.song);
+        if (job.status === 'failed' || job.status === 'partial') throw new Error(job.error);
         if (job.status === 'complete') {
           onSongReady(buildAccompaniment(job.song, 'простая'));
           break;
@@ -56,8 +58,12 @@ export default function SongInput({ onSongReady, isLoading, setIsLoading }) {
       {isLoading ? 'Распознаём…' : 'Получить мелодию и аккорды'}
     </Button>
     {progress && <p role="status" className="text-sm text-slate-600">{progress}</p>}
+    {readySong?.transcription_partial && <Button type="button" variant="outline" className="w-full" onClick={() => {
+      request.current?.abort();
+      onSongReady(buildAccompaniment(readySong, 'простая'));
+    }}>Открыть готовую часть ({Math.floor(readySong.processed_seconds / 60)}:{String(Math.floor(readySong.processed_seconds % 60)).padStart(2, '0')})</Button>}
     {configured === false && <p className="text-sm text-amber-700">Распознавание пока не настроено на сервере. Нужен ключ Gemini API.</p>}
     {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-    <p className="text-xs text-slate-400">Gemini распознаёт музыку по ссылке на видео. Это упрощённая учебная версия; сложные записи могут распознаваться с ошибками.</p>
+    <p className="text-xs text-slate-400">Можно открыть готовую часть, пока распознаётся остальное. Повторная попытка использует сохранённые фрагменты. Сложные записи могут распознаваться с ошибками.</p>
   </form>;
 }

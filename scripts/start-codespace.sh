@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p .cache
+export BAYANFLOW_CACHE_DIR="${BAYANFLOW_CACHE_DIR:-$PWD/.cache/transcriptions}"
 bash scripts/prepare-codespace.sh
 if [ "${1:-}" = '--restart' ]; then
   .venv/bin/python - <<'PY'
