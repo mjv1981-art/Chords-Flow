@@ -12,6 +12,6 @@
       "protocol": "http"
     }
   },
-  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y ffmpeg && bash scripts/setup.sh && npm run build",
+  "postCreateCommand": "bash scripts/prepare-codespace.sh",
   "postStartCommand": "bash scripts/start-codespace.sh"
 }

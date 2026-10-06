@@ -9,7 +9,15 @@ GitHub Pages serves static files and cannot run the Python/FFmpeg YouTube transc
 5. To allow everybody to use the preview, right-click port **8000**, select **Port Visibility → Public**, then share its forwarded address. Public access uses your Gemini API quota. Configure your API quota/budget appropriately. The optional `BAYANFLOW_ACCESS_PASSWORD` secret enables browser Basic authentication with username `bayanflow` if you later want a private preview; it is not required.
 6. Paste the YouTube link, click **Получить мелодию и аккорды**, and wait. Press Play; verify the left/right keyboard highlights. Toggle **Am** and press Play again. Keep the Codespace running while testing. When it stops, the preview URL stops serving the app.
 
-If the page says transcription is not configured, check that the Codespaces secret is assigned to this repository, then stop and restart the Codespace so the new secret is injected. If startup failed, open its terminal and inspect `.cache/codespace-server.log`; running `bash scripts/start-codespace.sh` retries startup without creating a second healthy server.
+If the page says transcription is not configured, check that the Codespaces secret is assigned to this repository, then stop and restart the Codespace so the new secret is injected.
+
+If startup failed or reports `.venv/bin/python: No such file or directory`, open **Terminal** in the browser editor and run:
+
+```bash
+git pull --ff-only && bash scripts/start-codespace.sh
+```
+
+The startup script installs missing prerequisites in Codespaces, creates the Python environment, installs dependencies, and builds the player before starting the server. Wait until it reports that BayanFlow is running, then open port **8000** from **Ports**. Later starts reuse dependencies and the build when they have not changed. If startup still fails, the terminal shows the error; server output is also saved in `.cache/codespace-server.log`.
 
 **Known limitation:** Gemini accepts actual audio, but the tested generated melody was transcribed with incorrect pitches/key. This is a prototype; musical accuracy is not ready for reliable practice. YouTube can also reject datacenter downloads or require login. A forwarded URL does not establish that a particular video can be downloaded or accurately transcribed.
 

@@ -2,11 +2,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p .cache
+bash scripts/prepare-codespace.sh
 if .venv/bin/python - <<'PY'
 import urllib.request, json
 try:
     with urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2) as response:
         assert json.load(response).get('status') == 'ok'
+    with urllib.request.urlopen('http://127.0.0.1:8000/', timeout=2) as response:
+        assert 'BayanFlow' in response.read().decode()
 except Exception:
     raise SystemExit(1)
 PY
@@ -30,5 +33,6 @@ for _ in range(40):
     except Exception:
         time.sleep(.25)
 else:
-    raise SystemExit('BayanFlow did not start. Inspect .cache/codespace-server.log.')
+    print(open('.cache/codespace-server.log').read()[-3000:])
+    raise SystemExit('BayanFlow did not start. The startup error is shown above.')
 PY
