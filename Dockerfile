@@ -1,7 +1,9 @@
 FROM node:24-bookworm-slim AS frontend
 WORKDIR /build
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN --mount=type=secret,id=build_ca,required=false \
+    if [ -s /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
+    npm ci --no-audit --no-fund
 COPY index.html vite.config.js jsconfig.json postcss.config.js tailwind.config.js ./
 COPY src ./src
 RUN npm run build
@@ -15,7 +17,9 @@ RUN apt-get update \
     && useradd --create-home --uid 10001 bayanflow
 COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
 COPY server/requirements.txt ./server/requirements.txt
-RUN pip install --no-cache-dir -r server/requirements.txt
+RUN --mount=type=secret,id=build_ca,required=false \
+    if [ -s /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \
+    pip install --no-cache-dir -r server/requirements.txt
 COPY server ./server
 COPY --from=frontend /build/dist ./dist
 COPY scripts/start-web.sh ./scripts/start-web.sh

@@ -26,7 +26,7 @@ Vite runs on port 5173 and proxies `/api` to FastAPI on port 8000. `dev:all` sta
 npm run dev
 ```
 
-For a built application, run `npm run build`, then the same Uvicorn command. FastAPI serves `dist` and `/api` together. Restart Uvicorn after building so it discovers `dist`. This first version is a private development application; it has no public-service authentication or durable job queue.
+For a built application, run `npm run build`, then the same Uvicorn command. FastAPI serves `dist` and `/api` together. Restart Uvicorn after building so it discovers `dist`. Public browser previews are supported. The optional BAYANFLOW_ACCESS_PASSWORD enables browser Basic authentication with username bayanflow; leave it unset for public access. Jobs still live in process memory, so use one server worker.
 
 ### Windows / PowerShell
 
