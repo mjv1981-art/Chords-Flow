@@ -1,0 +1,27 @@
+[
+  {
+    "id": "nightwish-sleeping-sun",
+    "title": "Sleeping Sun",
+    "artist": "Nightwish",
+    "aliases": [
+      "Sleeping Sun"
+    ],
+    "arrangement_file": "nightwish-sleeping-sun.json",
+    "description": "Вокальная мелодия · простой бас–аккорд · полная партия из MIDI",
+    "source_name": "MIDI Archive · Fio",
+    "source_url": "https://github.com/dirkncl/midiArchive/blob/8f4b676e5a584ac60f3d9d02ea2a69976e1aea05/N/N/Nightwish%20-%20Sleeping%20Sun.mid"
+  },
+  {
+    "id": "nightwish-come-cover-me",
+    "title": "Come Cover Me",
+    "artist": "Nightwish",
+    "aliases": [
+      "Come Cover Me",
+      "Cover Me"
+    ],
+    "arrangement_file": "nightwish-come-cover-me.json",
+    "description": "Вокальная мелодия · простой бас–аккорд · полная партия из MIDI",
+    "source_name": "MIDI Archive",
+    "source_url": "https://github.com/dirkncl/midiArchive/blob/8f4b676e5a584ac60f3d9d02ea2a69976e1aea05/N/N/Nightwish%20-%20Come%20Cover%20Me.mid"
+  }
+]

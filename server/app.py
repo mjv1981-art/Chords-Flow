@@ -1,14 +1,8 @@
-import copy
 import base64
 import binascii
-from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
-import shutil
 import secrets
-import threading
-import time
-import uuid
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
@@ -16,7 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-from .transcription import TranscriptionError, transcribe, youtube_url
+from .transcription import TranscriptionError
+from .song_library import catalogue, library_song, lookup
 
 load_dotenv(Path(__file__).resolve().parent.parent / '.env', override=False)
 
@@ -47,78 +42,47 @@ async def protect_preview(request, call_next):
     response.headers['Cache-Control'] = 'no-store'
     return response
 
-jobs: dict = {}
-lock = threading.RLock()
-executor = ThreadPoolExecutor(max_workers=2)
-
-
 class Request(BaseModel):
     url: str = Field(max_length=2048)
 
 
-@app.get('/api/health')
-def health():
-    return {'status': 'ok', 'transcription_configured': bool(os.environ.get('GEMINI_API_KEY')),
-            'transcription_source': 'gemini_youtube',
-            'ffmpeg_available': bool(shutil.which('ffmpeg') and shutil.which('ffprobe'))}
+class SongLookup(Request):
+    query: str = Field(default='', max_length=200)
 
 
-def process(job_id: str, url: str):
-    def progress(message):
-        with lock:
-            if isinstance(message, dict):
-                jobs[job_id].update(message)
-            else:
-                jobs[job_id]['progress'] = message
+class LibrarySelection(Request):
+    song_id: str = Field(min_length=1, max_length=80, pattern=r'^[a-z0-9-]+$')
+
+
+@app.post('/api/song-lookup')
+def identify_song(request: SongLookup):
     try:
-        song = transcribe(url, progress)
-        with lock:
-            if song.get('transcription_partial'):
-                jobs[job_id].update(status='partial', song=song, error=song['transcription_warning'])
-            else:
-                jobs[job_id].update(status='complete', song=song)
-    except TranscriptionError as error:
-        with lock:
-            jobs[job_id].update(status='failed', error=str(error))
-    except Exception:
-        # Do not leak provider response bodies, credentials, or internal paths.
-        with lock:
-            jobs[job_id].update(status='failed', error='Не удалось обработать аудио. Попробуйте другую ссылку.')
-
-
-@app.post('/api/transcriptions', status_code=202)
-def create(request: Request):
-    try:
-        url = youtube_url(request.url)
+        return lookup(request.url, request.query)
     except TranscriptionError as error:
         raise HTTPException(422, str(error)) from None
-    if not os.environ.get('GEMINI_API_KEY'):
-        raise HTTPException(503, 'Распознавание не настроено. Добавьте GEMINI_API_KEY в настройках сервера.')
-    with lock:
-        now = time.time()
-        for job_id in list(jobs):
-            if jobs[job_id]['status'] != 'processing' and now - jobs[job_id]['created'] > 3600:
-                del jobs[job_id]
-        if sum(j['status'] == 'processing' for j in jobs.values()) >= 2:
-            raise HTTPException(429, 'Сервис занят. Дождитесь завершения текущего распознавания.')
-        if len(jobs) >= 100:
-            oldest = next((i for i, j in jobs.items() if j['status'] != 'processing'), None)
-            if oldest:
-                del jobs[oldest]
-        job_id = uuid.uuid4().hex
-        jobs[job_id] = {'id': job_id, 'status': 'processing', 'created': now, 'progress': 'Открываем видео через Gemini…'}
-        executor.submit(process, job_id, url)
-    return {'id': job_id}
+
+
+@app.post('/api/library-song')
+def open_library_song(request: LibrarySelection):
+    try:
+        return {'song': library_song(request.song_id, request.url)}
+    except TranscriptionError as error:
+        raise HTTPException(404, str(error)) from None
+
+
+@app.get('/api/health')
+def health():
+    return {'status': 'ok', 'mode': 'song_library', 'library_count': len(catalogue()), 'ai_required': False}
+
+
+@app.post('/api/transcriptions')
+def retired_transcription(request: Request):
+    raise HTTPException(410, 'Распознавание аудио отключено. Обновите страницу и выберите готовую аранжировку песни.')
 
 
 @app.get('/api/transcriptions/{job_id}')
-def read(job_id: str):
-    with lock:
-        if job_id not in jobs:
-            raise HTTPException(404, 'Задание не найдено. Отправьте ссылку заново.')
-        result = copy.deepcopy(jobs[job_id])
-        result.pop('created', None)
-        return result
+def retired_job(job_id: str):
+    raise HTTPException(410, 'Распознавание аудио отключено. Обновите страницу.')
 
 
 # Built application can be served by one process. Dev mode uses Vite's /api proxy.

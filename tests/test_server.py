@@ -18,8 +18,7 @@ def clean_jobs(monkeypatch, tmp_path):
     monkeypatch.delenv('GEMINI_API_KEY', raising=False)
     monkeypatch.delenv('BAYANFLOW_ACCESS_PASSWORD', raising=False)
     monkeypatch.delenv('BAYANFLOW_PUBLIC', raising=False)
-    with backend.lock:
-        backend.jobs.clear()
+
 
 
 def score(**changes):
@@ -62,43 +61,13 @@ def test_overlap_and_harmony_gaps_rejected():
         assemble_song([(0, 2, score(harmony=[dict(chord='Dm',start=.5,duration=1.5)]))], {}, '')
 
 
-def test_missing_credentials_and_unknown_job():
-    assert client.get('/api/health').json()['transcription_configured'] is False
-    response = client.post('/api/transcriptions', json={'url': 'https://youtu.be/abcdefghijk'})
-    assert response.status_code == 503
-    assert 'GEMINI_API_KEY' in response.json()['detail']
-    assert client.get('/api/transcriptions/unknown').status_code == 404
-
-
-def test_job_completes_with_controlled_audio_service(monkeypatch):
-    monkeypatch.setenv('GEMINI_API_KEY', 'test-placeholder')
-    monkeypatch.setattr(backend.shutil, 'which', lambda tool: None)
-    result = assemble_song([(0,2,score())], {'title':'Fixture'}, 'https://youtu.be/abcdefghijk')
-    monkeypatch.setattr(backend, 'transcribe', lambda url, progress: result)
-    response = client.post('/api/transcriptions', json={'url':'https://youtu.be/abcdefghijk'})
-    assert response.status_code == 202
-    for _ in range(50):
-        job = client.get('/api/transcriptions/' + response.json()['id']).json()
-        if job['status'] != 'processing':
-            break
-        time.sleep(.01)
-    assert job['status'] == 'complete'
-    assert job['song'] == result
-
-
-def test_job_failure_does_not_expose_internal_exception(monkeypatch):
-    monkeypatch.setenv('GEMINI_API_KEY', 'test-placeholder')
-    def fail(url, progress):
-        raise RuntimeError('secret-value')
-    monkeypatch.setattr(backend, 'transcribe', fail)
-    response = client.post('/api/transcriptions', json={'url':'https://youtu.be/abcdefghijk'})
-    for _ in range(50):
-        job = client.get('/api/transcriptions/' + response.json()['id']).json()
-        if job['status'] != 'processing':
-            break
-        time.sleep(.01)
-    assert job['status'] == 'failed'
-    assert 'secret-value' not in str(job)
+def test_audio_ai_endpoints_are_retired_and_library_needs_no_api_key():
+    health = client.get('/api/health').json()
+    assert health['mode'] == 'song_library'
+    assert health['ai_required'] is False
+    assert health['library_count'] >= 2
+    assert client.post('/api/transcriptions', json={'url':'https://youtu.be/abcdefghijk'}).status_code == 410
+    assert client.get('/api/transcriptions/unknown').status_code == 410
 
 
 def test_gemini_receives_real_audio_and_validates_response(monkeypatch, tmp_path):
@@ -247,38 +216,6 @@ def test_time_limit_keeps_a_playable_part_and_stops_new_requests(monkeypatch):
     assert provider.call_count == 1
 
 
-def test_job_exposes_ready_song_while_processing_and_labels_partial_completion(monkeypatch):
-    import threading
-    monkeypatch.setenv('GEMINI_API_KEY', 'test-placeholder')
-    ready = assemble_song([(0,2,score())], {'title':'Partial fixture'}, 'https://youtu.be/abcdefghijk')
-    ready.update(transcription_partial=True, transcription_warning='Готовая часть 0:02 из 1:00.')
-    release = threading.Event()
-    def provider(url, progress):
-        progress({'progress': 'Ready part', 'song': ready})
-        release.wait(3)
-        return ready
-    monkeypatch.setattr(backend, 'transcribe', provider)
-    response = client.post('/api/transcriptions', json={'url':'https://youtu.be/abcdefghijk'})
-    path = '/api/transcriptions/' + response.json()['id']
-    try:
-        for _ in range(50):
-            job = client.get(path).json()
-            if job.get('song'):
-                break
-            time.sleep(.01)
-        assert job['status'] == 'processing'
-        assert job['song'] == ready
-    finally:
-        release.set()
-    for _ in range(50):
-        job = client.get(path).json()
-        if job['status'] != 'processing':
-            break
-        time.sleep(.01)
-    assert job['status'] == 'partial'
-    assert job['error'] == ready['transcription_warning']
-
-
 def test_silent_intro_does_not_set_the_song_key_or_tempo():
     silent = score(audible_music=False, key='C', tempo=80, notes=[], harmony=[dict(chord='N',start=0,duration=2)])
     result = assemble_song([(0,2,silent),(2,2,score())],{},'')
@@ -290,7 +227,7 @@ def test_silent_intro_does_not_set_the_song_key_or_tempo():
 def test_public_hosting_without_optional_password_is_supported():
     with TestClient(backend.app) as hosted:
         assert hosted.get('/api/health').status_code == 200
-        assert hosted.get('/api/transcriptions/unknown').status_code == 404
+        assert hosted.get('/api/transcriptions/unknown').status_code == 410
 
 
 def test_hosted_pages_and_jobs_require_password_but_health_is_available(monkeypatch):
@@ -300,7 +237,7 @@ def test_hosted_pages_and_jobs_require_password_but_health_is_available(monkeypa
         assert hosted.get('/').status_code == 401
         assert hosted.post('/api/transcriptions',json={'url':'https://youtu.be/abcdefghijk'}).status_code == 401
         assert hosted.get('/api/transcriptions/unknown').status_code == 401
-        assert hosted.get('/api/transcriptions/unknown',auth=('bayanflow','test-access-password')).status_code == 404
+        assert hosted.get('/api/transcriptions/unknown',auth=('bayanflow','test-access-password')).status_code == 410
         assert hosted.get('/api/transcriptions/unknown',auth=('bayanflow','wrong-password')).status_code == 401
 
 

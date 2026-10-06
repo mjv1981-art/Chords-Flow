@@ -1,99 +1,52 @@
 # BayanFlow
 
-Paste one YouTube video link, extract a simplified melody and chords from its **actual audio**, then practice with the existing accordion player. The imported Base44 player keeps its sheet music, keyboard styling, playback scheduler, tempo/seek controls and reed synthesis. PDF, notation upload, title search and Base44 authentication are removed. Saved songs live in this browser, not in Base44.
+Paste a YouTube link, confirm the song, and play a simple arrangement from an existing MIDI score. The library currently contains **Nightwish — Sleeping Sun** and **Nightwish — Come Cover Me**. Source links and attribution are shown before opening the arrangement. The selected video's key and tempo may differ from the library version.
 
-The right-hand panel uses **B-griff**, viewed from the front with the bellows to its left: inner row 3 = C/E♭/F♯/A, middle row 2 = C♯/E/G/B♭, outer row 1 = D/F/A♭/B. The existing three visible columns are retained. The left hand is Stradella.
+The imported Base44 player retains its sheet music, left/right keyboard styling, audio synthesis, playback controls and **Am** toggle. The right hand uses **B-griff**, viewed from the front with the bellows to its left: inner row 3 = C/E♭/F♯/A, middle row 2 = C♯/E/G/B♭, outer row 1 = D/F/A♭/B. The left hand is Stradella. Saved arrangements stay in this browser.
 
-## Test in your browser
+## Browser preview
 
-Use the GitHub Codespaces setup in [WEB_PREVIEW.md](WEB_PREVIEW.md). It starts the complete player and transcription backend in a browser-accessible environment; no Windows installation is needed. GitHub Pages alone cannot run the backend. A Codespace must be created in your GitHub account before a preview URL exists. The Docker/Render configuration also supports a public web deployment.
+Follow [WEB_PREVIEW.md](WEB_PREVIEW.md) for GitHub Codespaces. The complete web app runs on port 8000. No AI API key is needed. The old audio-transcription API is disabled and returns HTTP 410.
 
-## Run locally
+1. Paste a YouTube link and click **Определить песню**.
+2. The server reads the video title through YouTube oEmbed. If metadata is unavailable, enter the song and artist on the same screen and click **Найти аранжировку**.
+3. Confirm the matching song with **Да, открыть …**. The ready arrangement opens immediately without audio analysis or model processing.
+4. Press Play, check both keyboards, and try **Am**.
 
-Prerequisites: Node 22+ (Node 24 tested), Python 3.12, FFmpeg and ffprobe.
+For an unsupported song, the app offers searches for chords, MIDI and MusicXML. These are external search links, not automatic imports. The library can be expanded with checked symbolic sources. A chord chart alone does not supply a timed melody.
 
-```sh
+## Development
+
+Prerequisites: Node 22+ (24 tested), Python 3.12. FFmpeg and AI credentials are not required for the current flow.
+
+```bash
 bash scripts/setup.sh
-cp .env.example .env
-# Edit .env locally to set GEMINI_API_KEY.
 npm run dev:all
 ```
 
-Vite runs on port 5173 and proxies `/api` to FastAPI on port 8000. `dev:all` starts both and stops the backend when it exits. To run separately:
+Vite uses port 5173 and proxies `/api` to FastAPI on 8000. A built application uses `npm run build`, then:
 
-```sh
-.venv/bin/python -m uvicorn server.app:app --host 127.0.0.1 --port 8000
-npm run dev
+```bash
+.venv/bin/python -m uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
 
-For a built application, run `npm run build`, then the same Uvicorn command. FastAPI serves `dist` and `/api` together. Restart Uvicorn after building so it discovers `dist`. Public browser previews are supported. The optional BAYANFLOW_ACCESS_PASSWORD enables browser Basic authentication with username bayanflow; leave it unset for public access. Jobs still live in process memory, so use one server worker.
+Optional `BAYANFLOW_ACCESS_PASSWORD` enables browser Basic authentication with username `bayanflow`. Leave it unset for public access. Existing Gemini secrets are not used by the library flow. Outbound access to `www.youtube.com` is used only for metadata; local library playback and manual song lookup work without it.
 
-### Windows / PowerShell
+## Sources and simplification
 
-Install Node LTS, Python 3.12 and FFmpeg. Windows Package Manager can install them:
+See [library provenance and import instructions](server/library/SOURCES.md). Melody notes come from explicitly selected vocal MIDI tracks. The importer removes short ornaments and vocal polyphony, folds octaves, quantizes rhythm and derives simple triads from the written accompaniment. This is an adaptation for practice, not a guarantee of note-perfect agreement with a particular video. The Am toggle transposes minor songs and explicitly adapts major songs to minor as before.
 
-```powershell
-winget install --exact --id OpenJS.NodeJS.LTS
-winget install --exact --id Python.Python.3.12
-winget install --exact --id Gyan.FFmpeg
-```
+## Checks
 
-Close and reopen PowerShell after installation so PATH is refreshed. Extract the current **BayanFlow-test.zip**, open its `BayanFlow` folder, and open PowerShell there. The original Base44 ZIP does not contain these backend changes.
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r server\requirements.txt
-npm ci
-if (!(Test-Path .env)) { Copy-Item .env.example .env }
-notepad .env
-```
-
-In Notepad, fill `GEMINI_API_KEY=` with your own key and save. Keep `GEMINI_MODEL=gemini-3.8-flash`. The key configured in Codex's cloud environment is not automatically available on your Windows computer. `.env` is ignored by Git.
-
-Start the backend in that PowerShell window:
-
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn server.app:app --host 127.0.0.1 --port 8000
-```
-
-Open a second PowerShell window in the same folder and run:
-
-```powershell
-npm run dev
-```
-
-Open the local address printed by Vite **on that Windows computer**. Paste `https://www.youtube.com/watch?v=rsotlzr9wNw`, click **Получить мелодию и аккорды**, wait for processing, then press Play. Check both keyboard highlights and toggle **Am**; switching stops playback, so press Play again. A song uses one metadata request and approximately one Gemini request for each 30 seconds. Leave both PowerShell windows open; Ctrl+C stops each service.
-
-If PowerShell blocks `npm.ps1`, use `npm.cmd ci` and `npm.cmd run dev` instead; changing the execution policy is unnecessary. If `ffmpeg` or `ffprobe` is not found, finish installing FFmpeg and reopen the terminals. If Gemini cannot access the video, the app reports that error rather than returning invented music.
-
-## Configure transcription
-
-Set **GEMINI_API_KEY** securely in cloud environment settings, or in the ignored local `.env`. Never put it in a `VITE_` variable, source code, or a browser request. A paid chat subscription is not an API key. The server uses Gemini's `generateContent` endpoint, default `GEMINI_MODEL=gemini-3.8-flash`, with **native YouTube URL input**. Gemini accesses the video's media; the app no longer downloads audio from YouTube. Text models with web search can find existing chord charts, but a chord chart alone does not contain the timed melody needed by this player.
-
-The backend needs outbound access to `generativelanguage.googleapis.com`. It sends only canonical YouTube video URLs to Gemini using `fileData.fileUri`. Public, non-live videos up to 10 minutes are supported. A first request obtains video metadata and duration; subsequent requests use `videoMetadata.startOffset/endOffset` for 30-second clips. Gemini returns timed MIDI melody events and simple harmony. The server validates ranges, monophony, completion and harmony coverage, then converts seconds to a half-beat practice grid. The first musical segment supplies global key, tempo and meter. The existing player builds a simple bass–chord accompaniment. Silent segments produce no accompaniment. There is no fallback melody invented from a title. FFmpeg is still included in the environment for audio diagnostics, but transcription jobs do not require it.
-
-The **Am** toggle derives both hands from the original arrangement every time. Minor songs are transposed chromatically to A minor, preserving rhythm and raised leading tones. Major songs need a mode change: the toggle explicitly labels a simple adaptation to A natural minor, lowering the third, sixth and seventh and adapting diatonic chords. Dominant sevenths are retained. This is an adaptation, not an exact transposition of a major melody.
-
-Transcription is approximate and not a specialist note-perfect music transcription model. Dense metal mixes and vocal/instrument overlap need musical checking. Each song makes one metadata request plus approximately one Gemini request per 30 seconds of audio and consumes API quota. Errors (network, key, quota, incomplete notation, unavailable YouTube video) remain visible; the app does not show a successful result without a valid score.
-
-The default model uses its supported `low` thinking level, a limited response size and low video frame sampling for music requests. Each fragment is checked immediately; an invalid score gets one targeted retry. Completed fragments are cached for seven days in a local SQLite file. Codespaces stores this under `.cache/transcriptions`; other hosts default to the system temporary directory or can set `BAYANFLOW_CACHE_DIR` to a writable persistent directory. Cache keys include the canonical video URL, model, score revision, clip boundaries and musical context. No keys or raw provider responses are stored.
-
-The input shows **Открыть готовую часть** after the first playable fragment. This opens the existing player with a clearly labelled partial arrangement while the backend continues. A request stops starting new model calls after a five-minute budget, with each call limited to the remaining time (at most 90 seconds). A later failure keeps the playable portion; submit the same link again to resume using saved fragments. A full score is marked complete only after all fragments pass validation.
-
-## Verify
-
-```sh
-npm run build
+```bash
 npm run lint
 npm run typecheck
 npm test
+npm run build
 .venv/bin/python -m pytest -q
-# With dev:all running and Chromium installed:
-CHROMIUM_PATH=/usr/bin/chromium npm run test:browser
+TEST_ORIGIN=http://127.0.0.1:8000 CHROMIUM_PATH=/usr/bin/chromium npm run test:browser
 ```
 
-Browser tests use controlled API fixtures, verify synthesized audio scheduling, both keyboard highlights, Am/reset/seek and browser-local saving. Server tests exercise URL restrictions, native YouTube clip offsets, metadata limits, API audio payloads for diagnostics, timing validation and async job outcomes with a stubbed provider. These do **not** establish musical recognition accuracy.
-
-The failed user video `https://www.youtube.com/watch?v=nET3Q1qGie8` completed through the revised live flow in 87.8 seconds: nine validated fragments, 226 melody events and 72 chord changes, covering the reported 4:11 duration. The first playable fragment was ready after 10.3 seconds. A second run loaded the same complete score from disk in 0.006 seconds without model requests. Musical correctness has not been checked by listening. Earlier testing with a generated eight-note audio melody returned incorrect pitches and key: musical accuracy remains approximate and needs listening checks. Direct YouTube input does not guarantee accurate notes or access to every video. The current build, lint, typecheck, 6 music tests, 41 server/setup tests and 5 browser tests passed, including playing a partial result during processing and after a failed continuation.
+The live environment blocks YouTube oEmbed with a network-proxy 403, so automatic title retrieval here is verified with controlled HTTP fixtures. The real unavailable-metadata/manual-name fallback and library endpoints are validated locally. Browser checks cover explicit confirmation, unsupported songs, both imported full arrangements, both keyboard highlights, Am, seek and browser saving. No audio AI requests are made by this flow.
 
 Each cloud task is already isolated. Use the existing checkout; do not create a Git worktree unless explicitly requested.

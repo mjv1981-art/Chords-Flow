@@ -1,12 +1,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { chromium } = require('playwright');
-const { mkdirSync } = require('node:fs');
+const { mkdirSync, readFileSync } = require('node:fs');
 mkdirSync('.cache/test-artifacts', {recursive:true});
 
 const origin = process.env.TEST_ORIGIN || 'http://127.0.0.1:5173';
 const video = 'https://www.youtube.com/watch?v=rsotlzr9wNw';
-const fixture = {title:'Controlled audio fixture',composer:'Test',key:'Dm',tempo:60,time_signature:'4/4',
+const fixture = {title:'Controlled MIDI fixture',composer:'Test',key:'Dm',tempo:60,time_signature:'4/4',
   right_hand:[{note:'D4',time:0,duration:4},{note:'F4',time:4,duration:2},{note:'A4',time:6,duration:2}],
   harmony:[{chord:'Dm',time:0,duration:8}],source_url:video,arrangement_kind:'melody'};
 
@@ -14,22 +14,29 @@ async function launch() {
   return chromium.launch({executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',
     headless:true,args:['--no-sandbox','--autoplay-policy=no-user-gesture-required']});
 }
-test('YouTube-only input reports missing server key without claiming success', async () => {
-  const browser = await launch();
+function lookupResult(song=fixture, changes={}) {
+  return {video:{url:video,title:'Nightwish — '+song.title,author:'YouTube channel',metadata_available:true},
+    query:song.title,needs_name:false,manual_name:false,library_count:2,search_links:[],
+    matches:[{id:'controlled',title:song.title,artist:song.composer,description:'Existing MIDI arrangement',
+      source_url:'https://github.com/dirkncl/midiArchive',source_name:'MIDI Archive'}],...changes};
+}
+
+test('unknown song offers source searches without inventing a playable melody', async () => {
+  const browser=await launch();
   try {
-    const page = await browser.newPage();
-    await page.route('**/api/health',r=>r.fulfill({json:{status:'ok',transcription_configured:false,ffmpeg_available:true}}));
-    await page.route('**/api/transcriptions',r=>r.fulfill({status:503,json:{detail:'Добавьте GEMINI_API_KEY в настройках сервера.'}}));
+    const page=await browser.newPage();
+    await page.route('**/api/song-lookup',r=>r.fulfill({json:lookupResult(fixture,{matches:[],search_links:[
+      {label:'MIDI',url:'https://www.google.com/search?q=unknown+MIDI'}]})}));
     await page.goto(origin);
-    assert.equal(await page.getByRole('tab').count(),0);
     await page.getByLabel('Ссылка на YouTube').fill(video);
-    await page.getByRole('button',{name:'Получить мелодию и аккорды'}).click();
-    await page.getByRole('alert').waitFor();
-    assert.match(await page.getByRole('alert').innerText(),/GEMINI_API_KEY/);
+    await page.getByRole('button',{name:'Определить песню'}).click();
+    await page.getByText('Для этой песни готовой аранжировки пока нет.',{exact:false}).waitFor();
+    assert.equal(await page.getByRole('link',{name:'Найти midi'}).count(),1);
     assert.equal(await page.locator('canvas').count(),0);
+    assert.equal(await page.getByRole('button',{name:/Да, открыть/}).count(),0);
   } finally { await browser.close(); }
 });
-test('controlled transcription plays both hands, toggles Am, seeks, and restores original', async () => {
+test('confirmed library arrangement plays both hands, toggles Am, seeks, and restores original', async () => {
   const browser = await launch();
   try {
     const page = await browser.newPage({viewport:{width:1440,height:900}});
@@ -45,12 +52,14 @@ test('controlled transcription plays both hands, toggles Am, seeks, and restores
         return oscillator;
       };
     });
-    await page.route('**/api/health',r=>r.fulfill({json:{status:'ok',transcription_configured:true,ffmpeg_available:true}}));
-    await page.route('**/api/transcriptions',r=>r.fulfill({status:202,json:{id:'controlled'}}));
-    await page.route('**/api/transcriptions/controlled',r=>r.fulfill({json:{status:'complete',song:fixture}}));
+    await page.route('**/api/song-lookup',r=>r.fulfill({json:lookupResult()}));
+    await page.route('**/api/library-song',r=>r.fulfill({json:{song:fixture}}));
     await page.goto(origin);
     await page.getByLabel('Ссылка на YouTube').fill(video);
-    await page.getByRole('button',{name:'Получить мелодию и аккорды'}).click();
+    await page.getByRole('button',{name:'Определить песню'}).click();
+    await page.getByRole('button',{name:'Да, открыть '+fixture.title}).waitFor();
+    assert.equal(await page.locator('canvas').count(),0);
+    await page.getByRole('button',{name:'Да, открыть '+fixture.title}).click();
     await page.getByRole('heading',{name:fixture.title}).waitFor();
     assert.equal(await page.locator('canvas').count(),1);
     await page.getByRole('button',{name:'Воспроизвести',exact:true}).click();
@@ -102,28 +111,53 @@ test('a full-length score stays within canvas limits at high pixel density', asy
   } finally { await browser.close(); }
 });
 
-for (const status of ['processing', 'partial']) {
-  test(`a ready fragment remains playable when transcription is ${status}`, async () => {
-    const browser = await launch();
+test('blocked YouTube metadata can be replaced with a user-confirmed song name', async () => {
+  const browser=await launch();
+  try {
+    const page=await browser.newPage();
+    const requests=[];
+    await page.route('**/api/song-lookup',route=> {
+      const request=route.request().postDataJSON(); requests.push(request);
+      return route.fulfill({json:lookupResult(fixture,request.query ? {manual_name:true} :
+        {matches:[],needs_name:true,query:'',video:{url:video,title:'',author:'',metadata_available:false}})});
+    });
+    await page.route('**/api/library-song',r=>r.fulfill({json:{song:fixture}}));
+    await page.goto(origin);
+    await page.getByLabel('Ссылка на YouTube').fill(video);
+    await page.getByRole('button',{name:'Определить песню'}).click();
+    await page.getByText('YouTube не вернул название.',{exact:false}).waitFor();
+    await page.getByLabel('Песня и исполнитель').fill('Nightwish — Sleeping Sun');
+    await page.getByRole('button',{name:'Найти аранжировку'}).click();
+    await page.getByRole('button',{name:'Да, открыть '+fixture.title}).click();
+    await page.getByRole('heading',{name:fixture.title}).waitFor();
+    assert.equal(requests[1].query,'Nightwish — Sleeping Sun');
+  } finally { await browser.close(); }
+});
+
+for (const songId of ['nightwish-sleeping-sun','nightwish-come-cover-me']) {
+  test(`real imported ${songId} arrangement plays both hands and supports Am`,async()=> {
+    const song=JSON.parse(readFileSync('server/library/'+songId+'.json','utf8'));
+    const browser=await launch();
     try {
-      const page = await browser.newPage({viewport:{width:1440,height:900}});
-      const notice = 'Готовая часть 0:30 из 2:00. Остальная часть ещё обрабатывается.';
-      const partial = {...fixture, transcription_partial:true, processed_seconds:30,
-        total_seconds:120, lyrics_notice:notice, transcription_warning:notice};
-      await page.route('**/api/health',r=>r.fulfill({json:{status:'ok',transcription_configured:true,ffmpeg_available:false}}));
-      await page.route('**/api/transcriptions',r=>r.fulfill({status:202,json:{id:'partial-check'}}));
-      await page.route('**/api/transcriptions/partial-check',r=>r.fulfill({json:{status,song:partial,progress:'Ready',error:notice}}));
+      const page=await browser.newPage({viewport:{width:1440,height:900}});
+      const errors=[]; page.on('pageerror',error=>errors.push(error.message));
+      await page.route('**/api/song-lookup',r=>r.fulfill({json:lookupResult(song)}));
+      await page.route('**/api/library-song',r=>r.fulfill({json:{song}}));
       await page.goto(origin);
       await page.getByLabel('Ссылка на YouTube').fill(video);
-      await page.getByRole('button',{name:'Получить мелодию и аккорды'}).click();
-      await page.getByRole('button',{name:'Открыть готовую часть (0:30)'}).waitFor();
-      assert.equal(await page.getByText('Распознавание пока не настроено на сервере.',{exact:false}).count(),0);
-      if (status === 'partial') assert.match(await page.getByRole('alert').innerText(),/Готовая часть/);
-      await page.getByRole('button',{name:'Открыть готовую часть (0:30)'}).click();
-      await page.getByRole('heading',{name:fixture.title}).waitFor();
-      assert.equal(await page.getByText(notice,{exact:true}).count(),1);
+      await page.getByRole('button',{name:'Определить песню'}).click();
+      await page.getByRole('button',{name:'Да, открыть '+song.title}).click();
+      await page.getByRole('heading',{name:song.title}).waitFor();
       await page.getByRole('button',{name:'Воспроизвести',exact:true}).click();
-      await page.waitForFunction(() => document.querySelector('button[title="D4"]')?.className.includes('scale-110'));
+      await page.waitForFunction(note=>document.querySelector(`button[title="${note}"]`)?.className.includes('scale-110'),song.right_hand[0].note);
+      await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>
+        button.title && !/\d$/.test(button.title) && button.className.includes('scale-110')));
+      await page.getByRole('switch',{name:'Транспонировать в ля минор'}).click();
+      await page.getByText('Am · B-гриф',{exact:true}).waitFor();
+      await page.getByRole('button',{name:'Воспроизвести',exact:true}).click();
+      await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>
+        /\d$/.test(button.title) && button.className.includes('scale-110')));
+      assert.deepEqual(errors,[]);
     } finally { await browser.close(); }
   });
 }

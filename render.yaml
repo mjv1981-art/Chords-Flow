@@ -6,8 +6,3 @@ services:
     region: frankfurt
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
-    envVars:
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: GEMINI_MODEL
-        value: gemini-3.8-flash
