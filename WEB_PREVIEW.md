@@ -40,6 +40,24 @@ First inference downloads and caches model weights. Subsequent jobs reuse them. 
 
 YouTube sometimes refuses cloud downloads. If BayanFlow reports that YouTube did not provide audio, choose an audio file or the MIDI-export path. Files are limited to 50 MB for audio and 2 MB for MIDI. Job progress is real; **Отменить** stops processing. **Проверить результат обработки** restores a pending job after refreshing. The server limits jobs to one at a time and ten minutes.
 
+## Test authenticated YouTube access
+
+This is an administrator setup test for `youtube_bot_check`, not a task for each song or each user. Cookies may still be rejected from Codespaces. The [official yt-dlp guidance](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies) warns that automated account use can cause restrictions; use a separate account. The export is a login credential: do not send it through chat, commit it, or upload it through BayanFlow's music-file input.
+
+1. In the Codespace Terminal run `git pull --ff-only` and then `mkdir -p private && chmod 700 private`. The `private` folder is excluded from Git and is not served by the app.
+2. In normal desktop **Google Chrome**, install [Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc), the extension linked in yt-dlp's official FAQ. In Chrome's **Extensions → Manage extensions**, open its **Details** and enable **Allow in Incognito**.
+3. Press **Ctrl+Shift+N**. In that private window open YouTube and sign in with the separate account. In the same tab open `https://www.youtube.com/robots.txt`; keep this as the only incognito tab.
+4. Open the extension and export cookies for the current site in **Netscape/cookies.txt** format. Export only `youtube.com`, not all sites. Close the incognito window afterward, as recommended by yt-dlp to avoid session rotation.
+5. Rename the downloaded file **youtube-cookies.txt**. In the Codespace's left **Explorer**, right-click the **private** folder, select **Upload…**, and select that file. Do not open or paste its contents.
+6. In Terminal run:
+
+   ```bash
+   .venv/bin/python scripts/configure-youtube-cookies.py && bash scripts/start-codespace.sh --restart
+   ```
+
+   The helper validates an unexpired YouTube login, removes cookies for other sites, restricts file permissions, and sets the cookie-file path in the ignored `.env` while preserving other settings. This configures login but does not prove YouTube accepts it. A full Codespace restart is unnecessary for this file-based setting.
+7. Refresh BayanFlow and retry the same video. If access is still blocked, report the visible error only. Cookies expire; repeat the export/upload/helper steps to refresh them. To disable this test, delete `private/youtube-cookies.txt`, remove `YOUTUBE_COOKIES_FILE` from `.env`, and restart the app.
+
 ## Codex environment access
 
 The secret in this chat's **Environment settings** is separate from a **GitHub Codespaces secret**. To let Codex verify live inference here, add the same read token as `HF_TOKEN` in Environment settings, review/save the prepared model-download domains and scripts, then publish the environment. The required domains include `huggingface.co`, Hugging Face download/CDN hosts and `cloud.cp.jku.at` for optional Beat This weights. Saving configuration does not prove the running environment can reach them.

@@ -17,6 +17,9 @@ node_modules
 __pycache__/
 .pytest_cache/
 .cache/
+/private/
+/youtube-cookies.txt
+/cookies.txt
 .env.example
 !.env.example
 dist
