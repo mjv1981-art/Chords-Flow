@@ -194,27 +194,70 @@ def _command(command, folder, cancelled, deadline, *, progress=None, env=None):
             process.stdout.close()
 
 
+def _youtube_failure(details, stage):
+    """Classify private downloader output without exposing URLs, cookies or tokens."""
+    text = details.lower()
+    prefix = f'YouTube: {stage}. '
+    if 'not a bot' in text or 'confirm you’re not a bot' in text:
+        return prefix + 'YouTube требует проверку входа для сервера (youtube_bot_check). Распознавание ещё не началось.'
+    if any(value in text for value in ('private video', 'video unavailable', 'not available in your country', 'age-restricted', 'sign in to confirm your age', 'members-only')):
+        return prefix + 'Видео требует доступа или недоступно в регионе сервера (youtube_video_access).'
+    if any(value in text for value in ('javascript runtime', 'n challenge', 'signature solving', 'signature extraction')):
+        return prefix + 'Не удалось обработать проверку проигрывателя YouTube (youtube_player_challenge). Нужна проверка Node.js и yt-dlp на сервере.'
+    if 'po token' in text or 'po_token' in text:
+        return prefix + 'YouTube требует токен доступа к потоку для сервера (youtube_stream_token).'
+    if '403' in text or 'forbidden' in text:
+        return prefix + 'Сервер получил HTTP 403 (youtube_http_403). Причину нужно проверить на сервере; она может быть связана с сетевым прокси или доступом к потоку.'
+    if '429' in text or 'too many requests' in text:
+        return prefix + 'YouTube ограничил запросы сервера (youtube_rate_limit).'
+    if any(value in text for value in ('timed out', 'timeout', 'unable to resolve', 'name resolution', 'connection refused', 'network is unreachable')):
+        return prefix + 'Ошибка сети при получении записи (youtube_network).'
+    if 'requested format is not available' in text:
+        return prefix + 'Не найден доступный аудиопоток (youtube_audio_format).'
+    return prefix + 'Загрузчик не смог получить запись (youtube_download_failed). Распознавание ещё не началось.'
+
+
+def _youtube_command(command, folder, cancelled, deadline, stage):
+    log = folder / 'process.log'
+    offset = log.stat().st_size if log.exists() else 0
+    try:
+        return _command(command, folder, cancelled, deadline)
+    except TimeoutError:
+        raise TranscriptionError(f'YouTube: {stage}. Превышено время ожидания загрузки (youtube_timeout). Распознавание ещё не началось.') from None
+    except TranscriptionError:
+        details = ''
+        if log.exists():
+            with log.open('rb') as stream:
+                stream.seek(max(offset, log.stat().st_size - 65536))
+                details = stream.read(65536).decode('utf-8', errors='replace')
+        raise TranscriptionError(_youtube_failure(details, stage)) from None
+
+
 def _youtube(request, folder, cancelled, deadline):
     flags = ['--ignore-config', '--no-playlist', '--js-runtimes', 'node', '--socket-timeout', '10', '--retries', '1', '--extractor-retries', '1']
     cookies = os.environ.get('YOUTUBE_COOKIES_FILE')
     if cookies: flags += ['--cookies', cookies]
     base = [sys.executable, '-m', 'yt_dlp', *flags]
     try:
-        raw = _command([*base, '--dump-single-json', '--skip-download', request['url']], folder, cancelled,
-                       min(deadline, time.monotonic() + 45))
+        raw = _youtube_command([*base, '--dump-single-json', '--skip-download', request['url']], folder, cancelled,
+                       min(deadline, time.monotonic() + 45), 'получение информации о видео')
         metadata = json.loads(raw)
+        if not isinstance(metadata, dict):
+            raise ValueError()
         duration = float(metadata.get('duration') or 0)
-        if metadata.get('is_live') or not 0 < duration <= 600 or request['start'] >= duration:
-            raise TranscriptionError('Выберите обычное видео до 10 минут и фрагмент внутри записи.')
-        request['title'] = str(metadata.get('title') or 'YouTube')[:200]
-        _command([*base, '--quiet', '--no-warnings', '-f', 'bestaudio/best', '--max-filesize', '100M',
+    except (ValueError, TypeError):
+        raise TranscriptionError('YouTube вернул некорректные сведения о видео (youtube_metadata).') from None
+    if metadata.get('is_live') or not 0 < duration <= 600 or request['start'] >= duration:
+        raise TranscriptionError('Выберите обычное видео до 10 минут и фрагмент внутри записи.')
+    request['title'] = str(metadata.get('title') or 'YouTube')[:200]
+    _youtube_command([*base, '--quiet', '--no-warnings', '-f', 'bestaudio/best', '--max-filesize', '100M',
                   '--download-sections', f"*{request['start']}-{request['start'] + request['seconds']}",
                   '-o', str(folder / 'youtube.%(ext)s'), request['url']], folder, cancelled,
-                 min(deadline, time.monotonic() + 120))
-        source = next(path for path in folder.glob('youtube.*') if path.suffix not in {'.part', '.ytdl'})
-        return source
-    except (TranscriptionError, TimeoutError, ValueError, StopIteration):
-        raise TranscriptionError('YouTube не предоставил аудио. Загрузите аудиофайл этой записи или MIDI из MuScriptor.') from None
+                 min(deadline, time.monotonic() + 120), 'загрузка аудиофрагмента')
+    source = next((path for path in folder.glob('youtube.*') if path.suffix not in {'.part', '.ytdl'} and path.stat().st_size), None)
+    if source is None:
+        raise TranscriptionError('Загрузчик завершился без аудиофайла (youtube_empty_audio).')
+    return source
 
 
 def _run(job_id, request, source):

@@ -33,6 +33,55 @@ def ready(monkeypatch):
     monkeypatch.setattr(jobs, 'readiness', lambda:dict(configured=True, model='small', reason=''))
 
 
+@pytest.mark.parametrize('details,code', [
+    ('Sign in to confirm you’re not a bot', 'youtube_bot_check'),
+    ('HTTP Error 403: Forbidden', 'youtube_http_403'),
+    ('Requested format is not available', 'youtube_audio_format'),
+    ('No supported JavaScript runtime', 'youtube_player_challenge'),
+    ('requires a PO Token', 'youtube_stream_token'),
+    ('Private video', 'youtube_video_access'),
+])
+def test_youtube_failure_reports_stage_and_cause_without_private_output(monkeypatch, tmp_path, details, code):
+    def fail(*args, **kwargs):
+        (tmp_path / 'process.log').write_text(details + '\nhttps://private.test/?token=SECRET_COOKIE')
+        raise TranscriptionError('Downloader failed')
+    monkeypatch.setattr(jobs, '_command', fail)
+    with pytest.raises(TranscriptionError) as error:
+        jobs._youtube({'url':VIDEO,'start':0,'seconds':30},tmp_path,threading.Event(),time.monotonic()+60)
+    assert code in str(error.value)
+    assert 'получение информации' in str(error.value)
+    assert 'SECRET_COOKIE' not in str(error.value) and 'private.test' not in str(error.value)
+
+
+def test_youtube_invalid_excerpt_is_not_reported_as_download_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(jobs, '_command', lambda *args, **kwargs: b'{"duration": 10}')
+    with pytest.raises(TranscriptionError, match='фрагмент внутри записи'):
+        jobs._youtube({'url':VIDEO,'start':20,'seconds':30},tmp_path,threading.Event(),time.monotonic()+60)
+
+
+def test_youtube_download_failure_uses_only_current_command_output(monkeypatch, tmp_path):
+    def command(args, *unused, **kwargs):
+        log = tmp_path / 'process.log'
+        if '--dump-single-json' in args:
+            log.write_text('Old warning: PO Token\n')
+            return b'{"duration": 180, "title": "Vivo per lei"}'
+        with log.open('a') as stream:
+            stream.write('HTTP Error 403: Forbidden\n')
+        raise TranscriptionError('Downloader failed')
+    monkeypatch.setattr(jobs, '_command', command)
+    with pytest.raises(TranscriptionError) as error:
+        jobs._youtube({'url':VIDEO,'start':0,'seconds':30},tmp_path,threading.Event(),time.monotonic()+60)
+    assert 'загрузка аудиофрагмента' in str(error.value)
+    assert 'youtube_http_403' in str(error.value)
+
+
+def test_youtube_cancellation_is_not_reported_as_access_failure(monkeypatch, tmp_path):
+    def command(*args, **kwargs): raise InterruptedError()
+    monkeypatch.setattr(jobs, '_command', command)
+    with pytest.raises(InterruptedError):
+        jobs._youtube({'url':VIDEO,'start':0,'seconds':30},tmp_path,threading.Event(),time.monotonic()+60)
+
+
 def test_real_muscriptor_midi_export_can_be_inspected_and_arranged_without_model_access(monkeypatch):
     monkeypatch.setattr(jobs, 'readiness', lambda:dict(configured=False, model='small', reason='model_access'))
     response = client.post('/api/midi/inspect', files={'file':('export.mid',EXPORT,'audio/midi')})
