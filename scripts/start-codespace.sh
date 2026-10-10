@@ -56,8 +56,8 @@ for _ in range(40):
         with urllib.request.urlopen('http://127.0.0.1:8000/', timeout=2) as response:
             assert 'BayanFlow' in response.read().decode()
         print('BayanFlow is running. Open port 8000 from the Codespaces Ports tab.')
-        if data.get('ai_required'):
-            print('Add GEMINI_API_KEY as a GitHub Codespaces secret for this repository, then restart the Codespace.')
+        if data.get('transcription', {}).get('configured') is False:
+            print('MIDI import is ready. For audio recognition, accept the MuScriptor model license and add HF_TOKEN as a Codespaces secret, then restart the Codespace.')
         break
     except Exception:
         time.sleep(.25)

@@ -61,13 +61,15 @@ def test_overlap_and_harmony_gaps_rejected():
         assemble_song([(0, 2, score(harmony=[dict(chord='Dm',start=.5,duration=1.5)]))], {}, '')
 
 
-def test_audio_ai_endpoints_are_retired_and_library_needs_no_api_key():
+def test_muscriptor_health_keeps_midi_and_library_available_without_gemini(monkeypatch):
+    monkeypatch.setattr(backend.jobs, 'readiness', lambda:dict(configured=False, reason='model_access', model='small'))
     health = client.get('/api/health').json()
-    assert health['mode'] == 'song_library'
+    assert health['mode'] == 'muscriptor'
     assert health['ai_required'] is False
+    assert health['midi_import_available'] is True
     assert health['library_count'] >= 2
-    assert client.post('/api/transcriptions', json={'url':'https://youtu.be/abcdefghijk'}).status_code == 410
-    assert client.get('/api/transcriptions/unknown').status_code == 410
+    assert client.post('/api/transcriptions', json={'url':'https://youtu.be/abcdefghijk'}).status_code == 503
+    assert client.get('/api/transcriptions/unknown').status_code == 404
 
 
 def test_gemini_receives_real_audio_and_validates_response(monkeypatch, tmp_path):
@@ -227,7 +229,7 @@ def test_silent_intro_does_not_set_the_song_key_or_tempo():
 def test_public_hosting_without_optional_password_is_supported():
     with TestClient(backend.app) as hosted:
         assert hosted.get('/api/health').status_code == 200
-        assert hosted.get('/api/transcriptions/unknown').status_code == 410
+        assert hosted.get('/api/transcriptions/unknown').status_code == 404
 
 
 def test_hosted_pages_and_jobs_require_password_but_health_is_available(monkeypatch):
@@ -237,7 +239,7 @@ def test_hosted_pages_and_jobs_require_password_but_health_is_available(monkeypa
         assert hosted.get('/').status_code == 401
         assert hosted.post('/api/transcriptions',json={'url':'https://youtu.be/abcdefghijk'}).status_code == 401
         assert hosted.get('/api/transcriptions/unknown').status_code == 401
-        assert hosted.get('/api/transcriptions/unknown',auth=('bayanflow','test-access-password')).status_code == 410
+        assert hosted.get('/api/transcriptions/unknown',auth=('bayanflow','test-access-password')).status_code == 404
         assert hosted.get('/api/transcriptions/unknown',auth=('bayanflow','wrong-password')).status_code == 401
 
 

@@ -14,13 +14,19 @@ for tool in python3 node npm; do
   fi
 done
 
-if ! python3 -c 'import venv, ensurepip' >/dev/null 2>&1; then
+if ! python3 -c 'import venv, ensurepip' >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
   if [ "${CODESPACES:-}" != "true" ]; then
     echo 'Install Python venv support before starting the preview.' >&2
     exit 1
   fi
   echo 'Installing the browser preview prerequisites…'
   bash scripts/install-codespace-prerequisites.sh
+fi
+
+# MIDI import works even without model credentials. Install inference separately
+# so MuScriptor's newer web dependencies cannot change the player backend.
+if [ -f server/requirements-muscriptor.txt ] && [ "${BAYANFLOW_ENABLE_MUSCRIPTOR:-1}" = '1' ]; then
+  bash scripts/setup-muscriptor.sh
 fi
 
 setup_hash=$(sha256sum server/requirements.txt package-lock.json scripts/setup.sh | sha256sum | cut -d ' ' -f 1)

@@ -28,6 +28,7 @@ test('unknown song offers source searches without inventing a playable melody', 
     await page.route('**/api/song-lookup',r=>r.fulfill({json:lookupResult(fixture,{matches:[],search_links:[
       {label:'MIDI',url:'https://www.google.com/search?q=unknown+MIDI'}]})}));
     await page.goto(origin);
+    await page.getByRole('button',{name:'Готовые аранжировки из библиотеки'}).click();
     await page.getByLabel('Ссылка на YouTube').fill(video);
     await page.getByRole('button',{name:'Определить песню'}).click();
     await page.getByText('Для этой песни готовой аранжировки пока нет.',{exact:false}).waitFor();
@@ -55,6 +56,7 @@ test('confirmed library arrangement plays both hands, toggles Am, seeks, and res
     await page.route('**/api/song-lookup',r=>r.fulfill({json:lookupResult()}));
     await page.route('**/api/library-song',r=>r.fulfill({json:{song:fixture}}));
     await page.goto(origin);
+    await page.getByRole('button',{name:'Готовые аранжировки из библиотеки'}).click();
     await page.getByLabel('Ссылка на YouTube').fill(video);
     await page.getByRole('button',{name:'Определить песню'}).click();
     await page.getByRole('button',{name:'Да, открыть '+fixture.title}).waitFor();
@@ -99,6 +101,7 @@ test('a full-length score stays within canvas limits at high pixel density', asy
       left_hand:[{note:'D-bass',time:0,duration:1}],id:'long-fixture'};
     await page.addInitScript(song=>localStorage.setItem('bayanflow-songs',JSON.stringify([song])),longSong);
     await page.goto(origin);
+    await page.getByRole('button',{name:'Готовые аранжировки из библиотеки'}).click();
     await page.getByRole('button').filter({hasText:fixture.title}).click();
     await page.locator('canvas').waitFor();
     const width = await page.locator('canvas').evaluate(c=>c.width);
@@ -123,6 +126,7 @@ test('blocked YouTube metadata can be replaced with a user-confirmed song name',
     });
     await page.route('**/api/library-song',r=>r.fulfill({json:{song:fixture}}));
     await page.goto(origin);
+    await page.getByRole('button',{name:'Готовые аранжировки из библиотеки'}).click();
     await page.getByLabel('Ссылка на YouTube').fill(video);
     await page.getByRole('button',{name:'Определить песню'}).click();
     await page.getByText('YouTube не вернул название.',{exact:false}).waitFor();
@@ -144,6 +148,7 @@ for (const songId of ['nightwish-sleeping-sun','nightwish-come-cover-me']) {
       await page.route('**/api/song-lookup',r=>r.fulfill({json:lookupResult(song)}));
       await page.route('**/api/library-song',r=>r.fulfill({json:{song}}));
       await page.goto(origin);
+    await page.getByRole('button',{name:'Готовые аранжировки из библиотеки'}).click();
       await page.getByLabel('Ссылка на YouTube').fill(video);
       await page.getByRole('button',{name:'Определить песню'}).click();
       await page.getByRole('button',{name:'Да, открыть '+song.title}).click();
@@ -161,3 +166,77 @@ for (const songId of ['nightwish-sleeping-sun','nightwish-come-cover-me']) {
     } finally { await browser.close(); }
   });
 }
+
+test('MuScriptor transcription progress opens the existing player with Am and both hands',async()=> {
+  const browser=await launch();
+  try {
+    const page=await browser.newPage({viewport:{width:1440,height:900}});
+    await page.route('**/api/health',r=>r.fulfill({json:{status:'ok',transcription:{configured:true}}}));
+    let submitted, polls=0;
+    const id='a'.repeat(32);
+    await page.route('**/api/transcriptions',route=> {
+      submitted=route.request().postDataJSON();
+      return route.fulfill({json:{id,status:'preparing',message:'Готовим запись'}});
+    });
+    await page.route('**/api/transcriptions/'+id,route=>route.fulfill({json:++polls===1 ?
+      {id,status:'recognizing',message:'Распознаём ноты',completed:1,total:6} : {id,status:'ready',song:fixture}}));
+    await page.goto(origin);
+    await page.getByLabel('Ссылка на YouTube').fill(video);
+    await page.getByLabel('Начало, секунды').fill('40');
+    await page.getByRole('button',{name:'Получить мелодию и аккорды'}).click();
+    await page.getByText('Фрагменты: 1 из 6').waitFor();
+    await page.getByRole('heading',{name:fixture.title}).waitFor();
+    assert.deepEqual(submitted,{url:video,start:40,seconds:30,instrument:'voice'});
+    await page.getByRole('button',{name:'Воспроизвести',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('button[title="D4"]')?.className.includes('scale-110'));
+    await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>
+      button.title && !/\d$/.test(button.title) && button.className.includes('scale-110')));
+    await page.getByRole('switch',{name:'Транспонировать в ля минор'}).click();
+    await page.getByText('Am · B-гриф',{exact:true}).waitFor();
+    await page.screenshot({path:'.cache/test-artifacts/muscriptor-player.png',fullPage:true});
+  } finally { await browser.close(); }
+});
+
+test('MuScriptor errors stay visible and cancellation reaches the server',async()=> {
+  const browser=await launch();
+  try {
+    const page=await browser.newPage();
+    await page.route('**/api/health',r=>r.fulfill({json:{status:'ok',transcription:{configured:true}}}));
+    const id='b'.repeat(32); let cancelled=false;
+    await page.route('**/api/transcriptions',r=>r.fulfill({json:{id,status:'recognizing',message:'Распознаём ноты',completed:0,total:6}}));
+    await page.route('**/api/transcriptions/'+id,route=> {
+      if (route.request().method()==='DELETE') cancelled=true;
+      return route.fulfill({json:{id,status:cancelled ? 'cancelled' : 'recognizing',message:'Распознаём ноты',completed:0,total:6}});
+    });
+    await page.goto(origin);
+    await page.getByLabel('Ссылка на YouTube').fill(video);
+    await page.getByRole('button',{name:'Получить мелодию и аккорды'}).click();
+    await page.getByRole('button',{name:'Отменить',exact:true}).click();
+    await page.getByRole('button',{name:'Получить мелодию и аккорды'}).waitFor();
+    assert.equal(cancelled,true);
+    await page.route('**/api/transcriptions',r=>r.fulfill({json:{id,status:'error',message:'Нет доступа к модели.'}}));
+    await page.getByRole('button',{name:'Получить мелодию и аккорды'}).click();
+    await page.getByRole('alert').filter({hasText:'Нет доступа к модели.'}).waitFor();
+    assert.equal(await page.locator('canvas').count(),0);
+  } finally { await browser.close(); }
+});
+
+test('a real MuScriptor MIDI export is uploaded and its voice is selected without model credentials',async()=> {
+  const browser=await launch();
+  try {
+    const page=await browser.newPage({viewport:{width:1440,height:900}});
+    const data=JSON.parse(readFileSync('tests/fixtures/muscriptor-export.json','utf8'));
+    await page.goto(origin);
+    await page.getByLabel('Или аудиофайл / MIDI из MuScriptor').setInputFiles({name:'MuScriptor fixture.mid',mimeType:'audio/midi',buffer:Buffer.from(data.midi_base64,'base64')});
+    await page.getByRole('button',{name:'Открыть MIDI',exact:true}).click();
+    await page.getByLabel('Дорожка мелодии').waitFor();
+    assert.match(await page.getByLabel('Дорожка мелодии').locator('option:checked').textContent(),/voice.*вокал/);
+    await page.getByRole('button',{name:'Открыть выбранную мелодию'}).click();
+    await page.getByRole('heading',{name:'MuScriptor fixture'}).waitFor();
+    await page.getByRole('button',{name:'Воспроизвести',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('button[title="D4"]')?.className.includes('scale-110'));
+    await page.getByRole('switch',{name:'Транспонировать в ля минор'}).click();
+    await page.getByText('Am · B-гриф',{exact:true}).waitFor();
+    await page.screenshot({path:'.cache/test-artifacts/muscriptor-midi-import.png',fullPage:true});
+  } finally { await browser.close(); }
+});

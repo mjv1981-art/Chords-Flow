@@ -13,6 +13,7 @@ lerna-debug.log*
 
 node_modules
 .venv/
+.venv-muscriptor/
 __pycache__/
 .pytest_cache/
 .cache/
